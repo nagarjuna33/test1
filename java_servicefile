@@ -1,0 +1,11 @@
+[Unit]
+Description=springpetclinic java application
+
+[Service]
+User=ansible
+#path to executable.
+ExecStart=/usr/bin/java -jar /home/ansible/remote/workspace/springpet/target/spring-petclinic-2.7.3.jar
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target

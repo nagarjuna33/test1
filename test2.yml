@@ -1,0 +1,147 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    vpc_name: my-vpc
+    region: us-west-2
+    cidr_block: 10.0.0.0/16
+    pub_subnet_cidr_block: 10.0.0.0/24
+    pri_subnet_cidr_block: 10.0.1.0/24
+    group_name: my-security-group
+    group_description: My Security Group
+    device_name: /dev/sdf
+    volume_size: 10
+    image_id: ami-0735c191cf914754d
+    instance_type: t2.micro
+    key_name: mykey
+    tag_name: my-ec2-instance
+    ec2_volume_size: "10"
+    ec2_volume_type: "gp2"
+
+  tasks:
+  - name: Create VPC
+    ec2_vpc_net:
+      name: "{{ vpc_name }}"
+      cidr_block: "{{ cidr_block }}"
+      region: "{{ region }}"
+      state: present
+      tags:
+        Name: "{{ vpc_name }}"
+    register: vpc
+ 
+  - name: Create Internet Gateway
+    ec2_vpc_igw:
+      vpc_id: "{{ vpc.vpc.id }}"
+      region: "{{ region }}"
+      state: present
+      tags:
+        Name: "{{ vpc_name }}-igw"
+    register: igw
+
+  - name: Create Public Subnet
+    ec2_vpc_subnet:
+      vpc_id: "{{ vpc.vpc.id }}"
+      cidr: "{{ pub_subnet_cidr_block }}"
+      region: "{{ region }}"
+      state: present
+      az: "{{ region }}a"
+      tags:
+        Name: "{{ vpc_name }}-public"
+    register: pub_subnet
+
+  - name: Create Private Subnet
+    ec2_vpc_subnet:
+      vpc_id: "{{ vpc.vpc.id }}"
+      cidr: "{{ pri_subnet_cidr_block }}"
+      region: "{{ region }}"
+      state: present
+      az: "{{ region }}b"
+      tags:
+        Name: "{{ vpc_name }}-private"
+    register: pri_subnet
+
+  - name: Create public Route Table
+    ec2_vpc_route_table:
+      vpc_id: "{{ vpc.vpc.id }}"
+      region: "{{ region }}"
+      tags:
+        name: public route
+    register: pub_route_table
+
+  - name: Associate public subnet with public route table
+    ec2_vpc_route_table:
+      region: "{{ region }}"
+      vpc_id: "{{ vpc.vpc.id }}"
+      route_table_id: "{{ pub_route_table.route_table.id }}"
+      subnets:
+        - "{{ pub_subnet.subnet.id }}"
+      state: present
+
+  - name: Create private Route Table
+    ec2_vpc_route_table:
+      vpc_id: "{{ vpc.vpc.id }}"
+      region: "{{ region }}"
+      tags:
+        name: private route1
+    register: pri_route_table
+
+  - name: Associate private subnet with private route table
+    ec2_vpc_route_table:
+      region: "{{ region }}"
+      vpc_id: "{{ vpc.vpc.id }}"
+      route_table_id: "{{ pri_route_table.route_table.id }}"
+      subnets:
+        - "{{ pri_subnet.subnet.id }}"
+      state: present
+
+  - name: Create Security Group
+    ec2_group:
+      name: "{{ group_name }}"
+      description: "{{ group_description }}"
+      region: "{{ region }}"
+      vpc_id: "{{ vpc.vpc.id }}"
+      rules:
+        - proto: tcp
+          from_port: 22
+          to_port: 22
+          cidr_ip: "0.0.0.0/0"
+    register: security_group
+
+  - name: Create an ec2 instance
+    ec2:
+      key_name: "{{ key_name }}"
+      instance_type: "{{ instance_type }}"
+      image: "{{ image_id }}"
+      wait: true
+      region: "{{ region }}"
+      count: 1
+      count_tag:
+        Name: test
+      instance_tags:
+        Name: test
+      vpc_subnet_id: "{{ pri_subnet.subnet.id }}"
+      assign_public_ip: no
+    register: ec2
+
+  - name: Create Image
+    ec2_ami:
+      region: "{{ region }}"
+      instance_id: "{{ ec2.instances[0].id }}"
+      name: my_ami_id
+
+  - name: Create EBS volume
+    ec2_vol:
+      region: us-west-2
+      volume_size: "{{ ec2_volume_size }}"
+      volume_type: "{{ ec2_volume_type }}"
+      state: present
+      zone: us-west-2b
+    register: ec2_ebs_volume
+
+  - name: Attach EBS volume
+    ec2_vol:
+      region: "{{ region }}"
+      instance: "{{ ec2.instances[0].id }}"
+      id: "{{ ec2_ebs_volume.volume_id }}"
+      device_name: "/dev/sdf"
